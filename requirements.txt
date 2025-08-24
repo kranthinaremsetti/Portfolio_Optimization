@@ -1,0 +1,26 @@
+# Core scientific libraries
+numpy
+pandas
+scipy
+matplotlib
+seaborn
+
+# Quantum libraries
+qiskit-aer
+qiskit-ibm-runtime
+qiskit==1.1.1
+qiskit-algorithms==0.3.0
+qiskit-optimization==0.6.1
+qiskit-optimization[cplex]
+docplex
+
+# Optimization libraries
+cvxpy
+scikit-learn
+
+# Jupyter
+notebook
+jupyterlab
+
+# Utilities
+tqdm
