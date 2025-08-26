@@ -17,6 +17,7 @@ docplex
 # Optimization libraries
 cvxpy
 scikit-learn
+ecos
 
 # Jupyter
 notebook
