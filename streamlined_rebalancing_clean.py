@@ -4,6 +4,13 @@ import os
 import subprocess
 import sys
 from datetime import datetime
+import io
+from typing import Optional
+
+try:
+    import requests
+except ImportError:
+    requests = None
 
 class StreamlinedRebalancingWorkflow:
     def __init__(self, initial_investment=1000000):
@@ -14,7 +21,8 @@ class StreamlinedRebalancingWorkflow:
             initial_investment: Total investment amount (default: 1,000,000)
         """
         self.initial_investment = initial_investment
-        self.python_path = r"C:\Users\krant\OneDrive\Desktop\Quantum_hack\venv\Scripts\python.exe"
+        # Use current Python interpreter for portability
+        self.python_path = sys.executable or "python"
         
         # Dataset options for user selection
         self.dataset_options = {
@@ -113,7 +121,7 @@ print(f"Processed {{len(expected_returns)}} companies")
             if os.path.exists('temp_preprocessing.py'):
                 os.remove('temp_preprocessing.py')
 
-    def run_qaoa_optimization(self, dataset_name):
+    def run_qaoa_optimization(self, dataset_name, budget=5, risk_factor="medium"):
         """
         Run QAOA optimization for the dataset
         """
@@ -125,28 +133,11 @@ import pandas as pd
 import numpy as np
 import os
 
-try:
-    from qiskit_optimization import QuadraticProgram
-    from qiskit_algorithms.optimizers import COBYLA
-    from qiskit_algorithms import QAOA
-    from qiskit_optimization.algorithms import MinimumEigenOptimizer
-    
-    # Try newer Qiskit versions first
-    try:
-        from qiskit.primitives import StatevectorSampler as Sampler
-    except ImportError:
-        try:
-            from qiskit.primitives import Sampler
-        except ImportError:
-            from qiskit_aer.primitives import Sampler
-    
-    QISKIT_AVAILABLE = True
-    print("Qiskit quantum libraries loaded successfully")
-    
-except ImportError as e:
-    print(f"Qiskit import error: {{e}}")
-    print("Falling back to classical optimization only")
-    QISKIT_AVAILABLE = False
+from qiskit_optimization import QuadraticProgram
+from qiskit_algorithms.optimizers import COBYLA
+from qiskit_algorithms import QAOA
+from qiskit.primitives import Sampler
+from qiskit_optimization.algorithms import MinimumEigenOptimizer
 
 # Load preprocessed data
 dataset_option = '{dataset_name}'
@@ -161,23 +152,32 @@ print(f"Loaded data for {{len(expected_returns)}} companies")
 asset_volatility = np.sqrt(np.diag(cov_matrix))
 sharpe_ratio = expected_returns.values.flatten() / asset_volatility
 
-# Get indices of top 15 assets by Sharpe ratio
-N = 15
-sorted_indices = np.argsort(sharpe_ratio)[::-1][:N]
+# Select top assets similarly to API: N = max(budget, 1), effectively N = budget
+budget = int({budget})
+N = max(budget, 1)
+sorted_indices = np.argsort(sharpe_ratio)[::-1][:max(N, budget)]
 top_assets = expected_returns.index[sorted_indices]
 
 # Filter expected returns and covariance matrix for top assets
 mu = expected_returns.loc[top_assets].values.flatten()
 Sigma = cov_matrix.loc[top_assets, top_assets].values
-n_assets = N
+n_assets = len(top_assets)
 
-print(f"Selected top {{N}} assets by Sharpe ratio for QAOA optimization")
+print(f"Selected top {{n_assets}} assets by Sharpe ratio for QAOA optimization")
 
-# Risk tolerance parameter
-gamma = 0.5  # Medium risk tolerance
+# Risk tolerance parameter mapping like API
+gamma_map = {{
+    'low': 0.1,
+    'medium': 0.5,
+    'high': 1.0
+}}
+risk_factor = '{risk_factor}'
+if risk_factor not in gamma_map:
+    raise ValueError("Invalid risk_factor. Choose from 'low', 'medium', 'high'.")
+gamma = gamma_map[risk_factor]
 
-# Budget constraint: select 5 assets
-budget = 5
+# Budget constraint: select exactly min(budget, n_assets)
+budget = min(budget, n_assets)
 
 print(f"Budget constraint: selecting {{budget}} out of {{n_assets}} assets")
 
@@ -202,96 +202,57 @@ qp.linear_constraint(
     name="budget_constraint"
 )
 
-print("\\nSetting up QAOA quantum optimizer...")
+print("\nSetting up QAOA quantum optimizer...")
 
-try:
-    # Set up QAOA with quantum optimization
-    sampler = Sampler()
-    qaoa = QAOA(sampler=sampler, optimizer=COBYLA(), reps=1)
-    optimizer = MinimumEigenOptimizer(qaoa)
-    
-    print("Running QAOA optimization...")
-    result = optimizer.solve(qp)
-    
-    print("\\nQAOA Optimization completed!")
-    print("Optimal portfolio allocation:")
-    print(result)
-    
-    # Extract selected assets
-    selected_assets = [top_assets[i] for i, x in enumerate(result.x) if x > 0.5]
-    print(f"\\nSelected Portfolio Assets: {{selected_assets}}")
-    
-    # Calculate portfolio weights based on expected returns
-    selected_indices = [i for i, x in enumerate(result.x) if x > 0.5]
-    chosen_returns = expected_returns.loc[top_assets].iloc[selected_indices].values.flatten()
-    
-    # Compute proportional weights
-    weights = chosen_returns / chosen_returns.sum()
-    
-    # Total investment
-    total_investment = {self.initial_investment}
-    allocation = weights * total_investment
-    
-    # Create portfolio DataFrame
-    portfolio_df = pd.DataFrame({{
-        'Company': selected_assets,
-        'Expected_Return': chosen_returns,
-        'Weight': weights,
-        'Allocation': allocation,
-        'Percentage': weights * 100
-    }})
-    
-    # Save portfolio
-    portfolio_df.to_csv(f'portfolio_{{dataset_option.lower()}}.csv', index=False)
-    print(f"\\nPortfolio saved as portfolio_{{dataset_option.lower()}}.csv")
-    
-    # Print portfolio summary
-    print("\\nQAOA PORTFOLIO SUMMARY:")
-    print("=" * 40)
-    for _, row in portfolio_df.iterrows():
-        print(f"Company: {{row['Company']}}")
-        print(f"   Amount: Rs.{{row['Allocation']:,.0f}} ({{row['Percentage']:.1f}}%)")
-        print(f"   Expected Return: {{row['Expected_Return']:.4f}}")
-    
-    print(f"\\nTotal Objective Value: {{result.fval}}")
+# Set up QAOA with quantum optimization like API
+sampler = Sampler()
+qaoa = QAOA(sampler=sampler, optimizer=COBYLA(), reps=1)
+optimizer = MinimumEigenOptimizer(qaoa)
 
-except Exception as e:
-    print(f"\\nQAOA optimization failed: {{e}}")
-    print("Falling back to classical optimization...")
-    
-    # Fallback: Classical optimization - select top 5 by Sharpe ratio
-    top_5_indices = sorted_indices[:5]
-    selected_assets = expected_returns.index[top_5_indices].tolist()
-    selected_returns = expected_returns.iloc[top_5_indices].values.flatten()
-    
-    # Calculate weights based on expected returns
-    positive_returns = np.maximum(selected_returns, 0.001)
-    weights = positive_returns / positive_returns.sum()
-    
-    # Calculate allocations
-    total_investment = {self.initial_investment}
-    allocations = weights * total_investment
-    
-    # Create portfolio DataFrame
-    portfolio_df = pd.DataFrame({{
-        'Company': selected_assets,
-        'Expected_Return': selected_returns,
-        'Weight': weights,
-        'Allocation': allocations,
-        'Percentage': weights * 100
-    }})
-    
-    # Save portfolio
-    portfolio_df.to_csv(f'portfolio_{{dataset_option.lower()}}.csv', index=False)
-    print(f"\\nClassical portfolio saved as portfolio_{{dataset_option.lower()}}.csv")
-    
-    # Print portfolio summary
-    print("\\nCLASSICAL PORTFOLIO SUMMARY:")
-    print("=" * 40)
-    for _, row in portfolio_df.iterrows():
-        print(f"Company: {{row['Company']}}")
-        print(f"   Amount: Rs.{{row['Allocation']:,.0f}} ({{row['Percentage']:.1f}}%)")
-        print(f"   Expected Return: {{row['Expected_Return']:.4f}}")
+print("Running QAOA optimization...")
+result = optimizer.solve(qp)
+
+print("\nQAOA Optimization completed!")
+print("Optimal portfolio allocation:")
+print(result)
+
+# Extract selected assets
+selected_assets = [top_assets[i] for i, x in enumerate(result.x) if x > 0.5]
+print(f"\nSelected Portfolio Assets: {{selected_assets}}")
+
+# Calculate portfolio weights based on expected returns
+selected_indices = [i for i, x in enumerate(result.x) if x > 0.5]
+chosen_returns = expected_returns.loc[top_assets].iloc[selected_indices].values.flatten()
+
+# Compute proportional weights
+weights = chosen_returns / chosen_returns.sum() if chosen_returns.sum() > 0 else np.zeros_like(chosen_returns)
+
+# Total investment
+total_investment = {self.initial_investment}
+allocation = weights * total_investment
+
+# Create portfolio DataFrame using API-like schema
+portfolio_df = pd.DataFrame({{
+    'Asset': selected_assets,
+    'Expected Return': chosen_returns,
+    'Weight': weights,
+    'Investment': allocation,
+    'Percentage': weights * 100
+}})
+
+# Save portfolio
+portfolio_df.to_csv(f'portfolio_{{dataset_option.lower()}}.csv', index=False)
+print(f"\nPortfolio saved as portfolio_{{dataset_option.lower()}}.csv")
+
+# Print portfolio summary
+print("\nQAOA PORTFOLIO SUMMARY:")
+print("=" * 40)
+for _, row in portfolio_df.iterrows():
+    print(f"Asset: {{row['Asset']}}")
+    print(f"   Amount: Rs.{{row['Investment']:,.0f}} ({{row['Percentage']:.1f}}%)")
+    print(f"   Expected Return: {{row['Expected Return']:.4f}}")
+
+print(f"\nTotal Objective Value: {{result.fval}}")
 """
         
         # Write and execute temporary script
@@ -321,68 +282,105 @@ except Exception as e:
             if os.path.exists('temp_qaoa.py'):
                 os.remove('temp_qaoa.py')
 
+    def run_api_optimization(self, dataset_name: str, budget: int, risk_factor: str, total_investment: float,
+                             api_base: str = "http://127.0.0.1:8000") -> Optional[pd.DataFrame]:
+        """Call the FastAPI /optimize endpoint and return a DataFrame matching API schema.
+
+        Returns None on failure. Requires 'requests' to be installed and API server running.
+        """
+        if requests is None:
+            print("Requests library not available. Install it or use local optimization.")
+            return None
+        url = api_base.rstrip('/') + "/optimize"
+        payload = {
+            "dataset_option": dataset_name,
+            "budget": int(budget),
+            "risk_factor": risk_factor,
+            "total_investment": float(total_investment)
+        }
+        try:
+            resp = requests.post(url, json=payload, timeout=60)
+            if resp.status_code != 200:
+                print(f"API error {resp.status_code}: {resp.text[:300]}")
+                return None
+            # Expect CSV
+            csv_text = resp.text
+            df = pd.read_csv(io.StringIO(csv_text))
+            # Ensure required columns exist
+            required_cols = {"Asset", "Expected Return", "Weight", "Investment"}
+            if not required_cols.issubset(set(df.columns)):
+                print("API response missing expected columns.")
+                return None
+            # Derive Percentage if not present
+            if "Percentage" not in df.columns:
+                total = df["Investment"].sum()
+                df["Percentage"] = (df["Investment"] / total * 100.0) if total > 0 else 0.0
+            return df
+        except Exception as e:
+            print(f"Failed to call API: {e}")
+            return None
+
     def compare_portfolios(self, current_portfolio, future_portfolio, dataset_name):
         """
         Compare current and future portfolios for rebalancing recommendations
         """
         print(f"\nGENERATING REBALANCING RECOMMENDATIONS")
         print("=" * 50)
-        
-        current_companies = set(current_portfolio['Company'])
-        future_companies = set(future_portfolio['Company'])
-        
-        # Companies to sell
-        sell_companies = current_companies - future_companies
-        # Companies to buy  
-        buy_companies = future_companies - current_companies
-        # Companies in both
-        common_companies = current_companies & future_companies
-        
+
+        # Use API-aligned columns
+        current_assets = set(current_portfolio['Asset'])
+        future_assets = set(future_portfolio['Asset'])
+
+        # Assets to sell/buy/common
+        sell_assets = current_assets - future_assets
+        buy_assets = future_assets - current_assets
+        common_assets = current_assets & future_assets
+
         print("\nREBALANCING RECOMMENDATIONS:")
         print("=" * 40)
         
         # SELL recommendations
-        if sell_companies:
+        if sell_assets:
             print("\nSELL:")
-            for company in sell_companies:
-                current_data = current_portfolio[current_portfolio['Company'] == company].iloc[0]
-                print(f"SELL {company}")
-                print(f"   Amount: Rs.{current_data['Allocation']:,.0f} ({current_data['Percentage']:.1f}%)")
+            for asset in sell_assets:
+                current_data = current_portfolio[current_portfolio['Asset'] == asset].iloc[0]
+                print(f"SELL {asset}")
+                print(f"   Amount: Rs.{current_data['Investment']:,.0f} ({current_data['Percentage']:.1f}%)")
                 print(f"   Reason: No longer optimal")
         
         # BUY recommendations
-        if buy_companies:
+        if buy_assets:
             print("\nBUY:")
-            for company in buy_companies:
-                future_data = future_portfolio[future_portfolio['Company'] == company].iloc[0]
-                print(f"BUY {company}")
-                print(f"   Amount: Rs.{future_data['Allocation']:,.0f} ({future_data['Percentage']:.1f}%)")
+            for asset in buy_assets:
+                future_data = future_portfolio[future_portfolio['Asset'] == asset].iloc[0]
+                print(f"BUY {asset}")
+                print(f"   Amount: Rs.{future_data['Investment']:,.0f} ({future_data['Percentage']:.1f}%)")
                 print(f"   Reason: New optimal choice")
         
         # REBALANCE/HOLD recommendations
-        if common_companies:
+        if common_assets:
             print("\nREBALANCE/HOLD:")
-            for company in common_companies:
-                current_data = current_portfolio[current_portfolio['Company'] == company].iloc[0]
-                future_data = future_portfolio[future_portfolio['Company'] == company].iloc[0]
-                
+            for asset in common_assets:
+                current_data = current_portfolio[current_portfolio['Asset'] == asset].iloc[0]
+                future_data = future_portfolio[future_portfolio['Asset'] == asset].iloc[0]
+
                 percentage_diff = abs(future_data['Percentage'] - current_data['Percentage'])
-                amount_diff = future_data['Allocation'] - current_data['Allocation']
-                
+                amount_diff = future_data['Investment'] - current_data['Investment']
+
                 if percentage_diff > 2.0:  # Significant change
                     action = "INCREASE" if amount_diff > 0 else "DECREASE"
-                    print(f"{action} {company}")
+                    print(f"{action} {asset}")
                     print(f"   Current: {current_data['Percentage']:.1f}% -> New: {future_data['Percentage']:.1f}%")
                     print(f"   Change: Rs.{amount_diff:+,.0f}")
                 else:
-                    print(f"HOLD {company}")
-                    print(f"   Amount: Rs.{current_data['Allocation']:,.0f} ({current_data['Percentage']:.1f}%)")
+                    print(f"HOLD {asset}")
+                    print(f"   Amount: Rs.{current_data['Investment']:,.0f} ({current_data['Percentage']:.1f}%)")
         
         # Summary
         print(f"\nSUMMARY:")
-        print(f"   Stocks to Sell: {len(sell_companies)}")
-        print(f"   Stocks to Buy: {len(buy_companies)}")
-        print(f"   Stocks to Rebalance/Hold: {len(common_companies)}")
+        print(f"   Assets to Sell: {len(sell_assets)}")
+        print(f"   Assets to Buy: {len(buy_assets)}")
+        print(f"   Assets to Rebalance/Hold: {len(common_assets)}")
 
     def run_complete_workflow(self):
         """
@@ -415,9 +413,33 @@ except Exception as e:
                 print("Failed to process current dataset")
                 return
             
-            # Step 3: Run QAOA for current data
+            # Step 2: Optimization parameters and mode
+            use_api = False
+            mode = input("Use API for optimization? (y/N): ").strip().lower()
+            if mode == 'y':
+                if requests is None:
+                    print("'requests' not installed; falling back to local optimization.")
+                else:
+                    use_api = True
+            # Ask optimization parameters once
+            print("\nEnter optimization parameters (like API):")
+            while True:
+                try:
+                    budget = int(input("Budget (number of assets to select): ").strip())
+                    break
+                except ValueError:
+                    print("Please enter a valid integer for budget.")
+            risk_factor = input("Risk factor (low/medium/high) [medium]: ").strip().lower() or "medium"
+
             print(f"\nSTEP 2: Running optimization for CURRENT data...")
-            current_portfolio = self.run_qaoa_optimization(dataset_name)
+            if use_api:
+                current_portfolio = self.run_api_optimization(dataset_name, budget, risk_factor, self.initial_investment)
+                if current_portfolio is not None:
+                    current_file_out = f'portfolio_{dataset_name.lower()}.csv'
+                    current_portfolio.to_csv(current_file_out, index=False)
+                    print(f"Saved current portfolio from API to {current_file_out}")
+            else:
+                current_portfolio = self.run_qaoa_optimization(dataset_name, budget=budget, risk_factor=risk_factor)
             if current_portfolio is None:
                 print("Failed to optimize current portfolio")
                 return
@@ -429,9 +451,16 @@ except Exception as e:
                 print("Failed to process future dataset")
                 return
             
-            # Step 5: Run QAOA for future data
+            # Step 4: Run optimization for FUTURE data
             print(f"\nSTEP 4: Running optimization for FUTURE data...")
-            future_portfolio = self.run_qaoa_optimization(future_dataset_name)
+            if use_api:
+                future_portfolio = self.run_api_optimization(future_dataset_name, budget, risk_factor, self.initial_investment)
+                if future_portfolio is not None:
+                    future_file_out = f'portfolio_{future_dataset_name.lower()}.csv'
+                    future_portfolio.to_csv(future_file_out, index=False)
+                    print(f"Saved future portfolio from API to {future_file_out}")
+            else:
+                future_portfolio = self.run_qaoa_optimization(future_dataset_name, budget=budget, risk_factor=risk_factor)
             if future_portfolio is None:
                 print("Failed to optimize future portfolio")
                 return

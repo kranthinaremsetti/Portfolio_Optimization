@@ -1,0 +1,44 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editors/IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Env/secrets
+.env
+*.env
+
+# Project temp scripts & outputs
+temp_preprocessing.py
+temp_qaoa.py
+portfolio_*.csv
+
+# Generated results for future datasets (keep base results tracked)
+results/*_Future/
+
+# Node/npm (if any UIs are added later)
+node_modules/
