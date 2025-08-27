@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import pandas as pd
 import numpy as np
@@ -131,24 +131,32 @@ def optimize_portfolio(req: OptimizationRequest):
 
     # Get selected assets
     selected_indices = [i for i, val in enumerate(result.x) if val > 0.5]
-    chosen_returns = expected_returns.iloc[selected_indices].values.flatten()
+    chosen_returns = expected_returns.loc[top_assets].iloc[selected_indices].values.flatten()
     chosen_assets = top_assets[selected_indices]
     weights = chosen_returns / chosen_returns.sum() if chosen_returns.sum() > 0 else np.zeros_like(chosen_returns)
     allocation = weights * req.total_investment
+    percentage = weights * 100.0
 
-    portfolio_allocation = pd.DataFrame({
-        "Asset": chosen_assets,
-        "Expected Return": chosen_returns,
-        "Weight": weights,
-        "Investment": allocation
-    })
+    portfolio = []
+    for i in range(len(chosen_assets)):
+        portfolio.append({
+            "asset": str(chosen_assets[i]),
+            "expected_return": float(chosen_returns[i]),
+            "weight": float(weights[i]),
+            "investment": float(allocation[i]),
+            "percentage": float(percentage[i]),
+        })
 
-    # Convert to CSV
-    csv_buffer = io.StringIO()
-    portfolio_allocation.to_csv(csv_buffer, index=False)
-    csv_buffer.seek(0)
-
-    return StreamingResponse(csv_buffer, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=portfolio_allocation.csv"})
+    response = {
+        "dataset": _normalize_dataset_option(req.dataset_option),
+        "budget": int(budget),
+        "risk_factor": req.risk_factor,
+        "gamma": float(risk_factor),
+        "total_investment": float(req.total_investment),
+        "objective_value": float(result.fval) if hasattr(result, 'fval') else None,
+        "portfolio": portfolio,
+    }
+    return JSONResponse(content=response)
 
 
 @app.post("/rebalance")
@@ -288,17 +296,47 @@ def rebalance_portfolio(req: RebalancingRequest):
         "Action", "Asset", "Current Allocation", "Current %", "Future Allocation", "Future %", "Change (Allocation)"
     ])
 
-    # Build combined CSV
-    csv_buffer = io.StringIO()
-    csv_buffer.write("Current Portfolio\n")
-    cur_df.to_csv(csv_buffer, index=False)
-    csv_buffer.write("\n")
-    csv_buffer.write("Future Portfolio\n")
-    fut_df.to_csv(csv_buffer, index=False)
-    csv_buffer.write("\n")
-    csv_buffer.write("Rebalancing Recommendations\n")
-    recs_df.to_csv(csv_buffer, index=False)
-    csv_buffer.seek(0)
+    # Build JSON response
+    def df_to_list(df: pd.DataFrame):
+        rows = []
+        for _, r in df.iterrows():
+            rows.append({
+                "asset": str(r["Asset"]),
+                "expected_return": float(r["Expected Return"]),
+                "weight": float(r["Weight"]),
+                "investment": float(r.get("Investment", 0.0)),
+                "percentage": float(r.get("Percentage", 0.0)),
+            })
+        return rows
 
-    filename = f"rebalancing_{current_opt}_vs_{future_opt}.csv".replace("/", "_")
-    return StreamingResponse(csv_buffer, media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={filename}"})
+    current_portfolio = df_to_list(cur_df)
+    future_portfolio = df_to_list(fut_df)
+
+    recommendations = []
+    for _, r in recs_df.iterrows():
+        recommendations.append({
+            "action": str(r["Action"]),
+            "asset": str(r["Asset"]),
+            "current_allocation": float(r["Current Allocation"]),
+            "current_pct": float(r["Current %"]),
+            "future_allocation": float(r["Future Allocation"]),
+            "future_pct": float(r["Future %"]),
+            "change_allocation": float(r["Change (Allocation)"]),
+        })
+
+    response = {
+        "dataset": current_opt,
+        "future_dataset": future_opt,
+        "budget": int(req.budget),
+        "risk_factor": req.risk_factor,
+        "total_investment": float(req.total_investment),
+        "current_portfolio": current_portfolio,
+        "future_portfolio": future_portfolio,
+        "recommendations": recommendations,
+        "summary": {
+            "sell": int(len(sell)),
+            "buy": int(len(buy)),
+            "rebalance_or_hold": int(len(common)),
+        }
+    }
+    return JSONResponse(content=response)
