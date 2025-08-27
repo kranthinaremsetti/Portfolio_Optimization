@@ -26,7 +26,7 @@ def qrng_uniform(n_uniforms=1, bits_per=32):
     return np.array(uniforms[:n_uniforms])
 
 
-df = pd.read_csv("optimal_combination.csv")
+df = pd.read_csv("optimal_combination.csv") #harcoded
 df['Close'] = pd.to_numeric(df['Close'], errors='coerce')
 df = df.dropna()
 df['Return'] = df.groupby("Company")['Close'].pct_change()
@@ -45,7 +45,7 @@ def worst_case_equity(returns, initial_equity, n_days):
 
 @app.get("/simulate")
 def simulate(
-    initial_equity: Optional[float] = 100000,
+    initial_equity: Optional[float] = 200000,
     n_days: Optional[int] = 20,
     threshold: Optional[float] = 60
 ):
