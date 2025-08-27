@@ -66,6 +66,19 @@ def _normalize_dataset_option(name: str) -> str:
 
     return f"{base}_Future" if is_future else base
 
+def save_optimized_stocks_full(dataset_option: str, asset_names: list):
+    folder = _normalize_dataset_option(dataset_option)
+    # Path to original data (adjust as needed)
+    original_data_path = os.path.join("results", folder, "daily_returns.csv")
+    results_dir = os.path.join("results", folder)
+    os.makedirs(results_dir, exist_ok=True)
+    optimized_stocks_path = os.path.join(results_dir, "optimized_stocks.csv")
+    
+    df = pd.read_csv(original_data_path)
+    # Keep only Date and selected assets
+    columns_to_keep = ['Date'] + [asset for asset in asset_names if asset in df.columns]
+    df_filtered = df[columns_to_keep]
+    df_filtered.to_csv(optimized_stocks_path, index=False)
 
 def _get_results_paths(dataset_option: str):
     """Return (expected_returns_path, cov_matrix_path, error_message_or_None)."""
@@ -76,6 +89,8 @@ def _get_results_paths(dataset_option: str):
     if not os.path.exists(er) or not os.path.exists(cm):
         return None, None, f"Missing results for '{folder}'. Expected files: {er}, {cm}"
     return er, cm, None
+
+
 
 @app.post("/optimize")
 def optimize_portfolio(req: OptimizationRequest):
@@ -156,6 +171,7 @@ def optimize_portfolio(req: OptimizationRequest):
         "objective_value": float(result.fval) if hasattr(result, 'fval') else None,
         "portfolio": portfolio,
     }
+    save_optimized_stocks_full(req.dataset_option, chosen_assets)
     return JSONResponse(content=response)
 
 
@@ -340,3 +356,5 @@ def rebalance_portfolio(req: RebalancingRequest):
         }
     }
     return JSONResponse(content=response)
+
+
