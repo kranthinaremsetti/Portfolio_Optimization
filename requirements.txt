@@ -25,3 +25,6 @@ jupyterlab
 
 # Utilities
 tqdm
+
+fastapi
+uvicorn[standard]
